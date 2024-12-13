@@ -19,30 +19,24 @@ class LogSink {
 public:
     virtual ~LogSink() = default;
 
-    // 设置日志等级
     void set_level(Level level) {
         level_ = level;
     }
 
-    // 获取当前日志等级
     Level level() const {
         return level_;
     }
 
-    // 检查是否应该记录此等级的日志
     bool should_log(Level msg_level) const {
         return static_cast<int>(msg_level) >= static_cast<int>(level_);
     }
 
-    // 设置格式化器
     void set_formatter(std::shared_ptr<LogFormatter> formatter) {
         formatter_ = formatter;
     }
 
-    // 写入日志（纯虚函数）
     virtual void write(const LogContext& context) = 0;
 
-    // 刷新输出缓冲
     virtual void flush() {
         // 默认实现为空
     }
@@ -65,11 +59,7 @@ public:
         }
 
         std::string formatted = formatter_->format(context);
-        auto color = get_color(context.level);
-        
-        std::cout << color.code;
         std::cout << formatted;
-        std::cout << ColorCode::reset;
     }
 
     void flush() override {
@@ -90,7 +80,8 @@ public:
         }
 
         std::string formatted = formatter_->format(context);
-        file_ << formatted;
+        // 移除颜色代码后写入文件
+        file_ << color::strip_color_codes(formatted);
     }
 
     void flush() override {
@@ -111,10 +102,9 @@ enum class RotationStrategy {
 // 支持文件轮转的文件输出
 class RotatingFileSink : public FileSink {
 public:
-    // 基于大小的轮转构造函数
     RotatingFileSink(const std::string& filename,
-                     size_t max_size = 10 * 1024 * 1024,  // 默认10MB
-                     size_t max_files = 5)                 // 默认保留5个文件
+                     size_t max_size = 10 * 1024 * 1024,
+                     size_t max_files = 5)
         : FileSink(filename)
         , base_filename_(filename)
         , max_size_(max_size)
@@ -124,13 +114,12 @@ public:
         current_size_ = std::filesystem::file_size(filename);
     }
 
-    // 基于时间的轮转构造函数
     RotatingFileSink(const std::string& filename,
                      RotationStrategy strategy,
                      size_t max_files = 5)
         : FileSink(filename)
         , base_filename_(filename)
-        , max_size_(0)  // 不使用大小限制
+        , max_size_(0)
         , max_files_(max_files)
         , strategy_(strategy) {
         current_size_ = std::filesystem::file_size(filename);
@@ -143,9 +132,10 @@ public:
         }
 
         std::string formatted = formatter_->format(context);
-        size_t msg_size = formatted.size();
+        // 移除颜色代码后计算消息大小
+        std::string stripped = color::strip_color_codes(formatted);
+        size_t msg_size = stripped.size();
 
-        // 检查是否需要轮转
         bool should_rotate = false;
         auto now = std::chrono::system_clock::now();
 
@@ -167,7 +157,7 @@ public:
             }
         }
 
-        file_ << formatted;
+        file_ << stripped;
         current_size_ += msg_size;
     }
 
@@ -177,16 +167,13 @@ private:
         auto time_t_now = std::chrono::system_clock::to_time_t(now);
         std::tm tm_now = *std::localtime(&time_t_now);
 
-        // 重置分钟和秒
         tm_now.tm_min = 0;
         tm_now.tm_sec = 0;
 
         if (strategy_ == RotationStrategy::Daily) {
-            // 设置为明天的00:00
             tm_now.tm_hour = 0;
             tm_now.tm_mday += 1;
         } else if (strategy_ == RotationStrategy::Hourly) {
-            // 设置为下一个小时的00:00
             tm_now.tm_hour += 1;
         }
 
@@ -194,20 +181,16 @@ private:
     }
 
     void rotate_files() {
-        file_.close();  // 关闭当前文件
+        file_.close();
 
-        // 生成轮转后的文件名
         std::string rotated_name = generate_rotated_filename();
 
-        // 重命名当前文件
         if (std::filesystem::exists(base_filename_)) {
             std::filesystem::rename(base_filename_, rotated_name);
         }
 
-        // 删除最旧的文件（如果超过最大文件数）
         cleanup_old_files();
 
-        // 重新打开一个新文件
         file_.open(base_filename_, std::ios::out | std::ios::trunc);
         if (!file_.is_open()) {
             throw std::runtime_error("Failed to open new log file after rotation: " + base_filename_);
@@ -223,10 +206,8 @@ private:
         oss << base_filename_ << ".";
 
         if (strategy_ == RotationStrategy::Size) {
-            // 使用数字后缀
             oss << "1";
         } else {
-            // 使用时间戳后缀
             oss << std::put_time(&tm_now, "%Y%m%d-%H%M%S");
         }
 
@@ -238,7 +219,6 @@ private:
         auto base_path = std::filesystem::path(base_filename_).parent_path();
         auto base_stem = std::filesystem::path(base_filename_).stem().string();
 
-        // 收集所有相关的日志文件
         for (const auto& entry : std::filesystem::directory_iterator(base_path)) {
             if (entry.is_regular_file()) {
                 std::string filename = entry.path().filename().string();
@@ -248,25 +228,23 @@ private:
             }
         }
 
-        // 按修改时间排序
-        std::sort(log_files.begin(), log_files.end(), 
+        std::sort(log_files.begin(), log_files.end(),
             [](const std::string& a, const std::string& b) {
                 return std::filesystem::last_write_time(a) > std::filesystem::last_write_time(b);
             });
 
-        // 删除超出限制的旧文件
         while (log_files.size() >= max_files_) {
             std::filesystem::remove(log_files.back());
             log_files.pop_back();
         }
     }
 
-    std::string base_filename_;     // 基础文件名
-    size_t max_size_;              // 单个文件最大大小（字节）
-    size_t max_files_;             // 最大保留文件数
-    size_t current_size_;          // 当前文件大小
-    RotationStrategy strategy_;     // 轮转策略
-    std::chrono::system_clock::time_point next_rotation_time_;  // 下次轮转时间
+    std::string base_filename_;
+    size_t max_size_;
+    size_t max_files_;
+    size_t current_size_;
+    RotationStrategy strategy_;
+    std::chrono::system_clock::time_point next_rotation_time_;
 };
 
 } // namespace cpp_log

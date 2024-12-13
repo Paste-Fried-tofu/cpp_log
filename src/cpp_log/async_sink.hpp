@@ -74,8 +74,8 @@ public:
 
 protected:
     asio::awaitable<void> do_write(const std::string& message, Level level) override {
-        auto color = get_color(level);
-        std::cout << color.code << message << color.reset;std::cout.flush();
+        std::cout << message;
+        std::cout.flush();
         co_return;
     }
 };
@@ -89,7 +89,8 @@ public:
 
 protected:
     asio::awaitable<void> do_write(const std::string& message, Level level) override {
-        file_ << message;
+        // 移除颜色代码后写入文件
+        file_ << color::strip_color_codes(message);
         file_.flush();
         co_return;
     }

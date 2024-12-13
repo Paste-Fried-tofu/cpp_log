@@ -40,13 +40,15 @@ class DefaultFormatter : public LogFormatter {
 public:
     std::string format(const LogContext& context) override {
         auto time_str = std::format("{:%Y-%m-%d %H:%M:%S}", context.timestamp);
-        return std::format("{} [{}] <{}:{}> (Thread {}) {}\n",
-            time_str,
-            get_level_string(context.level),
-            context.location.file_name(),
-            context.location.line(),
-            context.thread_id,
-            context.message);
+        auto level_color = get_level_color(context.level);
+        
+        return std::format("{}{}{} {}[{}]{} {}{}<{}:{}>{}{}(Thread {}){}{}{}{}",
+            color::cyan, time_str, color::reset,
+            level_color, get_level_string(context.level), color::reset,
+            color::blue, context.location.file_name(), context.location.line(), color::reset,
+            color::magenta, context.thread_id, color::reset,
+            level_color, context.message, color::reset,
+            "\n");
     }
 };
 
