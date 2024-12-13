@@ -13,17 +13,27 @@
 #include <memory>
 #include <optional>
 
+#include<boost/asio/io_context.hpp>
 #include "cpp_log/level.hpp"
 #include "cpp_log/sink.hpp"
 #include "cpp_log/formatter.hpp"
+#include "cpp_log/async_sink.hpp"
 
 namespace cpp_log {
+
+namespace asio = boost::asio;
 
 // 日志记录器类
 class Logger {
 public:
-    Logger() : min_level_(Level::Debug) {}
+    Logger(std::shared_ptr<asio::io_context> ioc = nullptr)
+        : min_level_(Level::Debug)
+        , io_context_(ioc ? ioc : std::make_shared<asio::io_context>()) {}
+    
     ~Logger() = default;
+
+    // 获取io_context
+    asio::io_context& get_io_context() { return *io_context_; }
 
     // 添加输出目标，返回sink的索引
     size_t add_sink(std::shared_ptr<LogSink> sink) {
@@ -57,16 +67,12 @@ public:
     Level level() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return min_level_;
-    }
-
-    // 检查是否应该记录该等级的日志
+    }// 检查是否应该记录该等级的日志
     bool should_log(Level level) const {
         std::lock_guard<std::mutex> lock(mutex_);
         return level >= min_level_;
-    }
-
-    template<typename... Args>
-    void log(Level level, 
+    }template<typename... Args>
+    void log(Level level,
              const std::source_location& location,
              std::format_string<Args...> fmt,
              Args&&... args) {
@@ -88,13 +94,11 @@ public:
         // 写入所有输出目标
         for (auto& sink : sinks_) {
             sink->write(context);
-            sink->flush();
         }
     }
 
     template<typename... Args>
-    void debug(const std::source_location& location,
-              std::format_string<Args...> fmt, Args&&... args) {
+    void debug(const std::source_location& location,std::format_string<Args...> fmt, Args&&... args) {
         log(Level::Debug, location, fmt, std::forward<Args>(args)...);
     }
 
@@ -105,14 +109,12 @@ public:
     }
 
     template<typename... Args>
-    void warn(const std::source_location& location,
-             std::format_string<Args...> fmt, Args&&... args) {
+    void warn(const std::source_location& location,std::format_string<Args...> fmt, Args&&... args) {
         log(Level::Warning, location, fmt, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    void error(const std::source_location& location,
-              std::format_string<Args...> fmt, Args&&... args) {
+    void error(const std::source_location& location,std::format_string<Args...> fmt, Args&&... args) {
         log(Level::Error, location, fmt, std::forward<Args>(args)...);
     }
 
@@ -125,21 +127,39 @@ public:
 private:
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<LogSink>> sinks_;
-    Level min_level_;  // 全局最小日志等级
+    Level min_level_;// 全局最小日志等级
+    std::shared_ptr<asio::io_context> io_context_;
 };
 
 // 默认的全局日志记录器
 namespace detail {
-    inline Logger& default_logger() {
-        static Logger logger;
-        static bool initialized = false;
-        if (!initialized) {
-            auto console_sink = std::make_shared<ConsoleSink>();
-            console_sink->set_formatter(std::make_shared<DefaultFormatter>());
-            logger.add_sink(console_sink);
-            initialized = true;
+    class DefaultLogger {
+    public:
+        static Logger& instance() {
+            static DefaultLogger instance;
+            return instance.logger_;
         }
-        return logger;
+
+    private:
+        DefaultLogger() {
+            // 创建异步控制台输出
+            auto console_sink = std::make_shared<AsyncConsoleSink>(logger_.get_io_context());
+            console_sink->set_formatter(std::make_shared<DefaultFormatter>());
+            logger_.add_sink(console_sink);
+            
+            // 启动io_context运行线程
+            auto& ioc = logger_.get_io_context();
+            io_thread_ = std::thread([&ioc]() {
+                ioc.run();
+            });io_thread_.detach();  // 让线程在后台运行
+        }
+
+        Logger logger_;
+        std::thread io_thread_;
+    };
+
+    inline Logger& default_logger() {
+        return DefaultLogger::instance();
     }
 } // namespace detail
 
@@ -163,8 +183,7 @@ void warn(const std::source_location& location,
 }
 
 template<typename... Args>
-void error(const std::source_location& location,
-          std::format_string<Args...> fmt, Args&&... args) {
+void error(const std::source_location& location,std::format_string<Args...> fmt, Args&&... args) {
     detail::default_logger().error(location, fmt, std::forward<Args>(args)...);
 }
 

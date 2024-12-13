@@ -8,11 +8,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 查找Boost
+find_package(Boost REQUIRED)
+
 # 创建接口库
 add_library(cpp_log INTERFACE)
 target_include_directories(cpp_log INTERFACE 
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-    $<INSTALL_INTERFACE:include>
+    $<INSTALL_INTERFACE:include>${Boost_INCLUDE_DIRS}
 )
 
 # 生成版本文件
@@ -38,8 +41,7 @@ install(TARGETS cpp_log
 
 # 安装头文件
 install(DIRECTORY src/cpp_log
-    DESTINATION include
-    FILES_MATCHING PATTERN "*.hpp"
+    DESTINATION includeFILES_MATCHING PATTERN "*.hpp"
 )
 
 # 安装CMake配置文件
